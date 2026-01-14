@@ -1,7 +1,7 @@
 {
-  "name": "decky-plugin-template",
+  "name": "deckwarden",
   "version": "0.0.1",
-  "description": "A template to quickly create decky plugins from scratch, based on TypeScript and webpack",
+  "description": "Access your truested password manager from the Steam Deck gaming mode.",
   "type": "module",
   "scripts": {
     "build": "rollup -c",
@@ -10,21 +10,26 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/SteamDeckHomebrew/decky-plugin-template.git"
+    "url": "git+https://github.com/OlivierFortier/deckwarden.git"
   },
   "keywords": [
     "decky",
     "plugin",
     "plugin-template",
     "steam-deck",
-    "deck"
+    "deck",
+    "password",
+    "manager",
+    "bitwarden",
+    "1password",
+    "deckwarden"
   ],
-  "author": "You <you@you.tld>",
+  "author": "Olivier Fortier",
   "license": "BSD-3-Clause",
   "bugs": {
-    "url": "https://github.com/SteamDeckHomebrew/decky-plugin-template/issues"
+    "url": "https://github.com/OlivierFortier/deckwarden/issues"
   },
-  "homepage": "https://github.com/SteamDeckHomebrew/decky-plugin-template#readme",
+  "homepage": "https://github.com/OlivierFortier/deckwarden#readme",
   "devDependencies": {
     "@decky/rollup": "^1.0.2",
     "@decky/ui": "^4.11.0",
