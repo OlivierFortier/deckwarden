@@ -2,6 +2,7 @@ import os
 import shutil
 import tempfile
 import urllib.request
+import urllib.error
 import zipfile
 
 # The decky plugin module is located at decky-loader/plugin
@@ -593,6 +594,14 @@ class Plugin:
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
             )
+            await asyncio.sleep(0.5)
+            if self.bw_serve_process.returncode is not None:
+                stdout, stderr = await self.bw_serve_process.communicate()
+                error_text = stderr.decode(errors="replace").strip()
+                output_text = stdout.decode(errors="replace").strip()
+                detail = error_text or output_text or "bw serve exited early"
+                decky.logger.error(f"bw serve exited early: {detail}")
+                return {"success": False, "error": detail}
             decky.logger.info(
                 f"Started bw serve (pid={self.bw_serve_process.pid}) on {hostname}:{port}"
             )
@@ -606,3 +615,59 @@ class Plugin:
         except Exception as exc:
             decky.logger.error(f"Failed to start bw serve: {exc}")
             return {"success": False, "error": str(exc)}
+
+    async def bw_http_request(
+        self,
+        method: str,
+        hostname: str,
+        port: int,
+        path: str,
+        body: str | None = None,
+    ) -> dict:
+        if port <= 0:
+            return {"success": False, "error": "Port must be a positive integer."}
+
+        if not path.startswith("/"):
+            path = f"/{path}"
+
+        url = f"http://{hostname}:{port}{path}"
+        payload = body.encode("utf-8") if body and body.strip() else None
+        headers = {}
+        if payload is not None:
+            headers["Content-Type"] = "application/json"
+
+        request = urllib.request.Request(url, data=payload, method=method, headers=headers)
+
+        def _perform_request():
+            with urllib.request.urlopen(request, timeout=5) as response:
+                return response.status, response.reason, response.read().decode(
+                    "utf-8", errors="replace"
+                )
+
+        try:
+            status, reason, text = await asyncio.to_thread(_perform_request)
+            return {
+                "success": True,
+                "status": status,
+                "statusText": reason,
+                "body": text,
+                "url": url,
+            }
+        except urllib.error.HTTPError as exc:
+            try:
+                text = exc.read().decode("utf-8", errors="replace")
+            except Exception:
+                text = ""
+            return {
+                "success": False,
+                "status": exc.code,
+                "statusText": exc.reason,
+                "body": text,
+                "error": str(exc),
+                "url": url,
+            }
+        except urllib.error.URLError as exc:
+            reason = getattr(exc, "reason", exc)
+            return {"success": False, "error": str(reason), "url": url}
+        except Exception as exc:
+            return {"success": False, "error": str(exc), "url": url}
