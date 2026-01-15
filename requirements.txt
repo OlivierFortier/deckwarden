@@ -1,2 +1,0 @@
-cryptography>=46.0.0
-keyring>=25.2.0

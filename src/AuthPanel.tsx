@@ -1,8 +1,8 @@
 import { useEffect, useState } from "react";
 import { callable, toaster } from "@decky/api";
-import { ButtonItem, Field, TextField, ToggleField } from "@decky/ui";
+import { ButtonItem, Field, TextField, ToggleField, ConfirmModal, showModal } from "@decky/ui";
 
-const getSavedPasswordStatus = callable<[], { saved: boolean }>("get_saved_password_status");
+const getSavedPasswordStatus = callable<[], { saved: boolean; password?: string | null }>("get_saved_password_status");
 const savePassword = callable<[password: string], { success: boolean; error?: string }>("save_password");
 const clearSavedPassword = callable<[], { success: boolean; error?: string }>("clear_saved_password");
 const getSavedEmailStatus = callable<[], { saved: boolean; email?: string | null }>("get_saved_email_status");
@@ -22,6 +22,8 @@ const getItem = callable<[id: string], { success: boolean; item?: { id: string; 
 const getStatus = callable<[], { success: boolean; status?: { status?: string; userEmail?: string }; error?: string }>(
   "bw_status"
 );
+const lockVault = callable<[], { success: boolean; error?: string }>("bw_lock");
+const logoutVault = callable<[], { success: boolean; error?: string }>("bw_logout");
 
 export function AuthPanel() {
   const [rememberPassword, setRememberPassword] = useState(false);
@@ -39,6 +41,41 @@ export function AuthPanel() {
   const [itemDetails, setItemDetails] = useState<{ username?: string; password?: string; totp?: string; uris?: string[] } | null>(null);
   const [busy, setBusy] = useState(false);
 
+  const resetVaultState = () => {
+    setItems([]);
+    setSelectedItem(null);
+    setItemDetails(null);
+  };
+
+  const statusLabel = (status: string) => {
+    const normalized = status.toLowerCase();
+    const icon = normalized === "unlocked" ? "🔓" : normalized === "locked" ? "🔒" : "⚠️";
+    return `${icon} Vault status: ${status}`;
+  };
+
+  const refreshStatus = async () => {
+    try {
+      const result = await getStatus();
+      if (result.success && result.status?.status) {
+        const status = result.status.status;
+        setStatusText(statusLabel(status));
+        if (status.toLowerCase() !== "unlocked") {
+          resetVaultState();
+        }
+      } else {
+        setStatusText(null);
+      }
+    } catch {
+      setStatusText(null);
+    }
+  };
+
+  const shouldRefreshStatus = (error?: string) => {
+    if (!error) return false;
+    const normalized = error.toLowerCase();
+    return normalized.includes("no active session") || normalized.includes("unauthenticated") || normalized.includes("locked");
+  };
+
   useEffect(() => {
     let isMounted = true;
     getSavedPasswordStatus()
@@ -46,6 +83,9 @@ export function AuthPanel() {
         if (!isMounted) return;
         setSaved(Boolean(result.saved));
         setRememberPassword(Boolean(result.saved));
+        if (result.password) {
+          setPassword(result.password);
+        }
       })
       .catch(() => {
         if (!isMounted) return;
@@ -81,21 +121,7 @@ export function AuthPanel() {
   }, []);
 
   useEffect(() => {
-    let isMounted = true;
-    getStatus()
-      .then((result) => {
-        if (!isMounted) return;
-        if (result.success && result.status?.status) {
-          setStatusText(`Vault status: ${result.status.status}`);
-        }
-      })
-      .catch(() => {
-        if (!isMounted) return;
-        setStatusText(null);
-      });
-    return () => {
-      isMounted = false;
-    };
+    refreshStatus();
   }, []);
 
   const handleToggle = async (nextValue: boolean) => {
@@ -171,7 +197,7 @@ export function AuthPanel() {
           });
         }
       }
-      setStatusText("Vault unlocked and synced.");
+      await refreshStatus();
       toaster.toast({
         title: "Login complete",
         body: "Session refreshed and synced.",
@@ -181,6 +207,9 @@ export function AuthPanel() {
         title: "Login failed",
         body: result.error ?? "Failed to login",
       });
+      if (shouldRefreshStatus(result.error)) {
+        await refreshStatus();
+      }
     }
   };
 
@@ -189,7 +218,7 @@ export function AuthPanel() {
     const result = await syncVault();
     setBusy(false);
     if (result.success) {
-      setStatusText("Vault synced.");
+      await refreshStatus();
       toaster.toast({
         title: "Synced",
         body: "Vault updated from server.",
@@ -199,6 +228,9 @@ export function AuthPanel() {
         title: "Sync failed",
         body: result.error ?? "Failed to sync",
       });
+      if (shouldRefreshStatus(result.error)) {
+        await refreshStatus();
+      }
     }
   };
 
@@ -222,6 +254,9 @@ export function AuthPanel() {
         title: "Search failed",
         body: result.error ?? "Failed to search items",
       });
+      if (shouldRefreshStatus(result.error)) {
+        await refreshStatus();
+      }
     }
   };
 
@@ -243,6 +278,74 @@ export function AuthPanel() {
         title: "Error",
         body: result.error ?? "Failed to load item",
       });
+      if (shouldRefreshStatus(result.error)) {
+        await refreshStatus();
+      }
+    }
+  };
+
+  const handleLock = async () => {
+    setBusy(true);
+    const result = await lockVault();
+    setBusy(false);
+    if (result.success) {
+      resetVaultState();
+      await refreshStatus();
+      toaster.toast({
+        title: "Vault locked",
+        body: "Session cleared for this device.",
+      });
+    } else {
+      toaster.toast({
+        title: "Lock failed",
+        body: result.error ?? "Failed to lock vault",
+      });
+      if (shouldRefreshStatus(result.error)) {
+        await refreshStatus();
+      }
+    }
+  };
+
+  const handleLogout = async () => {
+    const confirmed = await new Promise<boolean>((resolve) => {
+      showModal(
+        <ConfirmModal
+          strTitle="Log out of Bitwarden?"
+          strDescription="This will remove the session and all saved credentials from this device."
+          strOKButtonText="Log out"
+          strCancelButtonText="Cancel"
+          onOK={() => resolve(true)}
+          onCancel={() => resolve(false)}
+        />
+      );
+    });
+    if (!confirmed) {
+      return;
+    }
+    setBusy(true);
+    const result = await logoutVault();
+    setBusy(false);
+    if (result.success) {
+      resetVaultState();
+      setEmail("");
+      setPassword("");
+      setSaved(false);
+      setSavedEmail(false);
+      setRememberEmail(false);
+      setRememberPassword(false);
+      await refreshStatus();
+      toaster.toast({
+        title: "Logged out",
+        body: "Credentials removed for this device.",
+      });
+    } else {
+      toaster.toast({
+        title: "Logout failed",
+        body: result.error ?? "Failed to logout",
+      });
+      if (shouldRefreshStatus(result.error)) {
+        await refreshStatus();
+      }
     }
   };
 
@@ -291,6 +394,12 @@ export function AuthPanel() {
       </ButtonItem>
       <ButtonItem layout="below" onClick={handleSync} disabled={busy}>
         Sync now
+      </ButtonItem>
+      <ButtonItem layout="below" onClick={handleLock} disabled={busy}>
+        Lock Vault
+      </ButtonItem>
+      <ButtonItem layout="below" onClick={handleLogout} disabled={busy}>
+        Logout
       </ButtonItem>
 
       {statusText ? <Field label="Status" description={statusText} /> : null}

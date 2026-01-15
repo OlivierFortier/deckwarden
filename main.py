@@ -6,6 +6,9 @@ import urllib.error
 import zipfile
 import json
 import re
+import subprocess
+import hashlib
+import base64
 
 # The decky plugin module is located at decky-loader/plugin
 # For easy intellisense checkout the decky-loader code repo
@@ -73,6 +76,47 @@ class Plugin:
     def _clear_session_env(self) -> None:
         os.environ.pop(self._session_env_var(), None)
 
+    def _get_encryption_key(self) -> str:
+        """Generate deterministic encryption key from plugin directory and user."""
+        base = f"{decky.DECKY_PLUGIN_DIR}:{decky.DECKY_USER}"
+        key_hash = hashlib.sha256(base.encode()).digest()
+        return base64.b64encode(key_hash).decode('ascii')[:32]
+
+    def _encrypt_password(self, password: str) -> bytes:
+        """Encrypt password using OpenSSL AES-256-CBC."""
+        try:
+            key = self._get_encryption_key()
+            result = subprocess.run(
+                ['openssl', 'enc', '-aes-256-cbc', '-salt', '-pbkdf2', '-a', '-pass', f'pass:{key}'],
+                input=password.encode('utf-8'),
+                capture_output=True,
+                check=True
+            )
+            return result.stdout
+        except (subprocess.CalledProcessError, FileNotFoundError) as e:
+            decky.logger.error(f"Encryption failed: {e}")
+            # Fallback to base64 encoding if openssl not available
+            return base64.b64encode(password.encode('utf-8'))
+
+    def _decrypt_password(self, encrypted_data: bytes) -> str | None:
+        """Decrypt password using OpenSSL AES-256-CBC."""
+        try:
+            key = self._get_encryption_key()
+            result = subprocess.run(
+                ['openssl', 'enc', '-aes-256-cbc', '-d', '-pbkdf2', '-a', '-pass', f'pass:{key}'],
+                input=encrypted_data,
+                capture_output=True,
+                check=True
+            )
+            return result.stdout.decode('utf-8')
+        except (subprocess.CalledProcessError, FileNotFoundError) as e:
+            decky.logger.error(f"Decryption failed: {e}")
+            # Fallback to base64 decoding if openssl not available
+            try:
+                return base64.b64decode(encrypted_data).decode('utf-8')
+            except Exception:
+                return None
+
     def _load_saved_password(self) -> None:
         env_password = self._get_password_env()
         if env_password:
@@ -83,11 +127,14 @@ class Plugin:
             self._saved_password = None
             return
         try:
-            saved = password_file.read_text(encoding="utf-8")
-            saved = saved.rstrip("\n")
-            if saved:
-                self._set_password_env(saved)
-                self._saved_password = saved
+            encrypted_data = password_file.read_bytes()
+            if encrypted_data:
+                decrypted = self._decrypt_password(encrypted_data)
+                if decrypted:
+                    self._set_password_env(decrypted)
+                    self._saved_password = decrypted
+                else:
+                    self._saved_password = None
             else:
                 self._saved_password = None
         except OSError:
@@ -366,6 +413,24 @@ class Plugin:
 
         return {"success": True}
 
+    async def bw_lock(self) -> dict:
+        session = self._get_cached_session()
+        result = await self._run_bw(["lock"], session=session)
+        self._clear_saved_session()
+        if not result.get("success"):
+            return result
+        return {"success": True}
+
+    async def bw_logout(self) -> dict:
+        session = self._get_cached_session()
+        result = await self._run_bw(["logout"], session=session)
+        self._clear_saved_session()
+        await self.clear_saved_password()
+        await self.clear_saved_email()
+        if not result.get("success"):
+            return result
+        return {"success": True}
+
     async def extract_bw_zip(self) -> dict:
         zip_name = "bw-oss-linux-2025.12.1.zip"
         bin_dir = Path(decky.DECKY_PLUGIN_DIR) / "bin"
@@ -418,9 +483,10 @@ class Plugin:
             self._set_password_env(password)
             self._ensure_runtime_dir()
             password_file = self._password_file()
+            encrypted_data = self._encrypt_password(password)
             fd = os.open(password_file, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
             try:
-                os.write(fd, password.encode("utf-8"))
+                os.write(fd, encrypted_data)
             finally:
                 os.close(fd)
             try:
@@ -476,11 +542,20 @@ class Plugin:
 
     async def get_saved_password_status(self) -> dict:
         if self._saved_password is not None:
-            return {"saved": True}
-        if self._get_password_env() is not None:
-            return {"saved": True}
+            return {"saved": True, "password": self._saved_password}
+        env_password = self._get_password_env()
+        if env_password is not None:
+            return {"saved": True, "password": env_password}
         password_file = self._password_file()
-        return {"saved": password_file.exists()}
+        if password_file.exists():
+            try:
+                encrypted_data = password_file.read_bytes()
+                decrypted = self._decrypt_password(encrypted_data)
+                if decrypted:
+                    return {"saved": True, "password": decrypted}
+            except OSError:
+                pass
+        return {"saved": False, "password": None}
 
     async def get_saved_email_status(self) -> dict:
         if self._saved_email is not None:
