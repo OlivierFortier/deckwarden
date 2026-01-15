@@ -131,3 +131,58 @@ class Plugin:
         except Exception as exc:
             decky.logger.error(f"Failed to locate bundled Bitwarden CLI: {exc}")
             return {"success": False, "error": str(exc)}
+
+    async def bw_serve(
+        self,
+        port: int = 8087,
+        hostname: str = "localhost",
+        disable_origin_protection: bool = False,
+    ) -> dict:
+        """
+        Start the Bitwarden CLI local API server.
+
+        Based on https://bitwarden.com/help/cli/#serve:
+        bw serve --port <port> --hostname <hostname>
+        Optional: --disable-origin-protection
+        """
+        if port <= 0:
+            return {"success": False, "error": "Port must be a positive integer."}
+
+        if getattr(self, "bw_serve_process", None) and self.bw_serve_process.returncode is None:
+            return {
+                "success": True,
+                "status": "already_running",
+                "pid": self.bw_serve_process.pid,
+            }
+
+        install_result = await self.install_bw_cli()
+        if not install_result.get("success"):
+            return install_result
+
+        bw_path = install_result.get("path")
+        if not bw_path:
+            return {"success": False, "error": "Bitwarden CLI path not available."}
+
+        args = [bw_path, "serve", "--port", str(port), "--hostname", hostname]
+        if disable_origin_protection:
+            args.append("--disable-origin-protection")
+
+        try:
+            self.bw_serve_process = await asyncio.create_subprocess_exec(
+                *args,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            decky.logger.info(
+                f"Started bw serve (pid={self.bw_serve_process.pid}) on {hostname}:{port}"
+            )
+            return {
+                "success": True,
+                "pid": self.bw_serve_process.pid,
+                "port": port,
+                "hostname": hostname,
+                "disable_origin_protection": disable_origin_protection,
+            }
+        except Exception as exc:
+            decky.logger.error(f"Failed to start bw serve: {exc}")
+            return {"success": False, "error": str(exc)}
