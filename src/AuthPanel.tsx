@@ -5,6 +5,9 @@ import { ButtonItem, Field, TextField, ToggleField } from "@decky/ui";
 const getSavedPasswordStatus = callable<[], { saved: boolean }>("get_saved_password_status");
 const savePassword = callable<[password: string], { success: boolean; error?: string }>("save_password");
 const clearSavedPassword = callable<[], { success: boolean; error?: string }>("clear_saved_password");
+const getSavedEmailStatus = callable<[], { saved: boolean; email?: string | null }>("get_saved_email_status");
+const saveEmail = callable<[email: string], { success: boolean; error?: string }>("save_email");
+const clearSavedEmail = callable<[], { success: boolean; error?: string }>("clear_saved_email");
 const loginAndSync = callable<
   [email: string, password: string, server: string, totpCode: string],
   { success: boolean; error?: string }
@@ -22,11 +25,13 @@ const getStatus = callable<[], { success: boolean; status?: { status?: string; u
 
 export function AuthPanel() {
   const [rememberPassword, setRememberPassword] = useState(false);
+  const [rememberEmail, setRememberEmail] = useState(false);
   const [password, setPassword] = useState("");
   const [totpCode, setTotpCode] = useState("");
   const [email, setEmail] = useState("");
   const [useEuServer, setUseEuServer] = useState(false);
   const [saved, setSaved] = useState(false);
+  const [savedEmail, setSavedEmail] = useState(false);
   const [statusText, setStatusText] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [items, setItems] = useState<{ id: string; name: string }[]>([]);
@@ -46,6 +51,28 @@ export function AuthPanel() {
         if (!isMounted) return;
         setSaved(false);
         setRememberPassword(false);
+      });
+
+    return () => {
+      isMounted = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    let isMounted = true;
+    getSavedEmailStatus()
+      .then((result) => {
+        if (!isMounted) return;
+        setSavedEmail(Boolean(result.saved));
+        setRememberEmail(Boolean(result.saved));
+        if (result.email) {
+          setEmail(result.email);
+        }
+      })
+      .catch(() => {
+        if (!isMounted) return;
+        setSavedEmail(false);
+        setRememberEmail(false);
       });
 
     return () => {
@@ -86,6 +113,21 @@ export function AuthPanel() {
     }
   };
 
+  const handleToggleEmail = async (nextValue: boolean) => {
+    setRememberEmail(nextValue);
+    if (!nextValue) {
+      const result = await clearSavedEmail();
+      if (!result.success) {
+        toaster.toast({
+          title: "Error",
+          body: result.error ?? "Failed to clear saved email",
+        });
+      }
+      setSavedEmail(false);
+      setEmail("");
+    }
+  };
+
   const handleSave = async () => {
     if (!password.trim()) {
       toaster.toast({
@@ -118,6 +160,17 @@ export function AuthPanel() {
     setBusy(false);
     setTotpCode("");
     if (result.success) {
+      if (rememberEmail && email.trim()) {
+        const saveResult = await saveEmail(email.trim());
+        if (saveResult.success) {
+          setSavedEmail(true);
+        } else {
+          toaster.toast({
+            title: "Email not saved",
+            body: saveResult.error ?? "Failed to save email",
+          });
+        }
+      }
       setStatusText("Vault unlocked and synced.");
       toaster.toast({
         title: "Login complete",
@@ -208,6 +261,12 @@ export function AuthPanel() {
       />
 
       <ToggleField
+        checked={rememberEmail}
+        label="Remember email on this device"
+        onChange={(value) => handleToggleEmail(Boolean(value))}
+      />
+
+      <ToggleField
         checked={useEuServer}
         label="Use EU server (bitwarden.eu)"
         onChange={(value) => setUseEuServer(Boolean(value))}
@@ -245,6 +304,10 @@ export function AuthPanel() {
             <Field label="Status" description="Saved to BW_PASSWORD for this device." />
           ) : null}
         </>
+      ) : null}
+
+      {rememberEmail && savedEmail ? (
+        <Field label="Email" description="Saved to this device." />
       ) : null}
 
       <TextField

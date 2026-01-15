@@ -21,8 +21,14 @@ class Plugin:
     def _password_runtime_dir(self) -> Path:
         return Path(decky.DECKY_PLUGIN_RUNTIME_DIR) / "deckwarden"
 
+    def _email_settings_dir(self) -> Path:
+        return Path(decky.DECKY_PLUGIN_SETTINGS_DIR) / "deckwarden"
+
     def _password_file(self) -> Path:
         return self._password_runtime_dir() / "saved_password.txt"
+
+    def _email_file(self) -> Path:
+        return self._email_settings_dir() / "saved_email.txt"
 
     def _password_env_var(self) -> str:
         return "BW_PASSWORD"
@@ -38,6 +44,14 @@ class Plugin:
         runtime_dir.mkdir(parents=True, exist_ok=True)
         try:
             os.chmod(runtime_dir, 0o700)
+        except OSError:
+            pass
+
+    def _ensure_settings_dir(self) -> None:
+        settings_dir = self._email_settings_dir()
+        settings_dir.mkdir(parents=True, exist_ok=True)
+        try:
+            os.chmod(settings_dir, 0o700)
         except OSError:
             pass
 
@@ -78,6 +92,17 @@ class Plugin:
                 self._saved_password = None
         except OSError:
             self._saved_password = None
+
+    def _load_saved_email(self) -> None:
+        email_file = self._email_file()
+        if not email_file.exists():
+            self._saved_email = None
+            return
+        try:
+            saved = email_file.read_text(encoding="utf-8").strip()
+            self._saved_email = saved or None
+        except OSError:
+            self._saved_email = None
 
     def _load_saved_session(self) -> None:
         env_session = self._get_session_env()
@@ -292,6 +317,8 @@ class Plugin:
         password = (password or "").strip()
         totp_code = (totp_code or "").strip()
 
+        effective_email = email or self._saved_email
+
         config_result = await self.bw_config_server(server)
         if not config_result.get("success"):
             return config_result
@@ -312,9 +339,9 @@ class Plugin:
                 status = {}
 
         if status.get("status") == "unauthenticated":
-            if not email:
+            if not effective_email:
                 return {"success": False, "error": "Email required for login"}
-            login_args = ["login", email, effective_password]
+            login_args = ["login", effective_email, effective_password]
             if totp_code:
                 login_args.extend(["--method", "0", "--code", totp_code])
             login_result = await self._run_bw(login_args)
@@ -405,6 +432,27 @@ class Plugin:
         except OSError as exc:
             return {"success": False, "error": f"Failed to persist password: {exc}"}
 
+    async def save_email(self, email: str) -> dict:
+        email = (email or "").strip()
+        if not email:
+            return {"success": False, "error": "Email is empty"}
+        try:
+            self._ensure_settings_dir()
+            email_file = self._email_file()
+            fd = os.open(email_file, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+            try:
+                os.write(fd, email.encode("utf-8"))
+            finally:
+                os.close(fd)
+            try:
+                os.chmod(email_file, 0o600)
+            except OSError:
+                pass
+            self._saved_email = email
+            return {"success": True}
+        except OSError as exc:
+            return {"success": False, "error": f"Failed to persist email: {exc}"}
+
     async def clear_saved_password(self) -> dict:
         self._saved_password = None
         self._clear_password_env()
@@ -416,6 +464,16 @@ class Plugin:
             return {"success": False, "error": f"Failed to remove password: {exc}"}
         return {"success": True}
 
+    async def clear_saved_email(self) -> dict:
+        self._saved_email = None
+        email_file = self._email_file()
+        try:
+            if email_file.exists():
+                email_file.unlink()
+        except OSError as exc:
+            return {"success": False, "error": f"Failed to remove email: {exc}"}
+        return {"success": True}
+
     async def get_saved_password_status(self) -> dict:
         if self._saved_password is not None:
             return {"saved": True}
@@ -423,6 +481,18 @@ class Plugin:
             return {"saved": True}
         password_file = self._password_file()
         return {"saved": password_file.exists()}
+
+    async def get_saved_email_status(self) -> dict:
+        if self._saved_email is not None:
+            return {"saved": True, "email": self._saved_email}
+        email_file = self._email_file()
+        if email_file.exists():
+            try:
+                saved = email_file.read_text(encoding="utf-8").strip()
+                return {"saved": bool(saved), "email": saved or None}
+            except OSError:
+                return {"saved": False, "email": None}
+        return {"saved": False, "email": None}
 
     async def long_running(self):
         await asyncio.sleep(15)
@@ -433,8 +503,10 @@ class Plugin:
     async def _main(self):
         self.loop = asyncio.get_event_loop()
         self._saved_password = None
+        self._saved_email = None
         self._session = None
         self._load_saved_password()
+        self._load_saved_email()
         self._load_saved_session()
         decky.logger.info("Hello World!")
 
@@ -452,6 +524,7 @@ class Plugin:
     async def _uninstall(self):
         decky.logger.info("Goodbye World!")
         await self.clear_saved_password()
+        await self.clear_saved_email()
         pass
 
     async def start_timer(self):
