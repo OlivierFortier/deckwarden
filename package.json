@@ -1,7 +1,7 @@
 {
   "name": "deckwarden",
   "version": "0.0.1",
-  "description": "Access your truested password manager from the Steam Deck gaming mode.",
+  "description": "Access your trusted password manager from the Steam Deck gaming mode.",
   "type": "module",
   "scripts": {
     "build": "rollup -c",
