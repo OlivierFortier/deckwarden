@@ -11,13 +11,17 @@ import {
   // routerHook
 } from "@decky/api"
 import { FaShip } from "react-icons/fa";
+import { AuthPanel } from "./AuthPanel";
 import { InstallButton } from "./ExampleDeckyComponent";
 
 function Content() {
   return (
     <PanelSection title="Deckwarden">
       <PanelSectionRow>
-        <InstallButton/>
+        <AuthPanel />
+      </PanelSectionRow>
+      <PanelSectionRow>
+        <InstallButton />
       </PanelSectionRow>
     </PanelSection>
   );
