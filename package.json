@@ -30,6 +30,14 @@
     "url": "https://github.com/OlivierFortier/deckwarden/issues"
   },
   "homepage": "https://github.com/OlivierFortier/deckwarden#readme",
+  "remote_binary_bundling" : true,
+  "remote_binary": [
+    {
+      "name": "bw-oss-linux-2025.12.1.zip",
+      "url": "https://github.com/bitwarden/clients/releases/download/cli-v2025.12.1/bw-oss-linux-2025.12.1.zip",
+      "sha256hash": "810702f1b767145c9a4f3b4ce032eeedc20edc40c5c6c0e09357e40d8405354d"
+    }
+  ],
   "devDependencies": {
     "@decky/rollup": "^1.0.2",
     "@decky/ui": "^4.11.1",

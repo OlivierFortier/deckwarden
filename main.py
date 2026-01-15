@@ -1,10 +1,15 @@
 import os
+import shutil
+import tempfile
+import urllib.request
+import zipfile
 
 # The decky plugin module is located at decky-loader/plugin
 # For easy intellisense checkout the decky-loader code repo
 # and add the `decky-loader/plugin/imports` path to `python.analysis.extraPaths` in `.vscode/settings.json`
-import decky
+import decky # type: ignore
 import asyncio
+from pathlib import Path
 
 class Plugin:
     # A normal method. It can be called from the TypeScript side using @decky/api.
@@ -55,3 +60,74 @@ class Plugin:
         decky.migrate_runtime(
             os.path.join(decky.DECKY_HOME, "template"),
             os.path.join(decky.DECKY_USER_HOME, ".local", "share", "decky-template"))
+
+    async def install_bw_cli(self) -> dict:
+        defaults_path = Path(decky.DECKY_PLUGIN_DIR) / "defaults" / "bw"
+        bundled_path = Path(decky.DECKY_PLUGIN_DIR) / "bin" / "bw"
+        runtime_path = Path(decky.DECKY_PLUGIN_RUNTIME_DIR) / "bin" / "bw"
+        download_url = "https://github.com/bitwarden/clients/releases/download/cli-v2025.12.1/bw-oss-linux-2025.12.1.zip"
+        archive_name = Path(download_url).name
+        defaults_archive = Path(decky.DECKY_PLUGIN_DIR) / "defaults" / archive_name
+        bundled_archive = Path(decky.DECKY_PLUGIN_DIR) / "bin" / archive_name
+        runtime_archive = Path(decky.DECKY_PLUGIN_RUNTIME_DIR) / "bin" / archive_name
+
+        try:
+            decky.logger.info("Starting install_bw_cli")
+            if runtime_path.exists():
+                bw_path = runtime_path
+            elif defaults_path.exists():
+                bw_path = defaults_path
+            elif bundled_path.exists():
+                bw_path = bundled_path
+            else:
+                bw_path = runtime_path
+
+                def _extract_archive(archive_path: Path, target_path: Path):
+                    decky.logger.info(f"Extracting bw from archive: {archive_path}")
+                    target_path.parent.mkdir(parents=True, exist_ok=True)
+                    with zipfile.ZipFile(archive_path) as zip_file:
+                        members = [
+                            member
+                            for member in zip_file.infolist()
+                            if not member.is_dir() and Path(member.filename).name == "bw"
+                        ]
+                        if not members:
+                            raise FileNotFoundError("bw binary not found in archive.")
+
+                        member = members[0]
+                        with zip_file.open(member) as source, open(target_path, "wb") as dest:
+                            shutil.copyfileobj(source, dest)
+
+                def _download_archive(archive_path: Path):
+                    decky.logger.info(f"Downloading bw archive to: {archive_path}")
+                    archive_path.parent.mkdir(parents=True, exist_ok=True)
+                    urllib.request.urlretrieve(download_url, archive_path)
+
+                archive_path = None
+                for candidate in (defaults_archive, bundled_archive, runtime_archive):
+                    if candidate.exists():
+                        archive_path = candidate
+                        break
+
+                if archive_path is None:
+                    await asyncio.to_thread(_download_archive, runtime_archive)
+                    archive_path = runtime_archive
+
+                await asyncio.to_thread(_extract_archive, archive_path, bw_path)
+
+            try:
+                bw_path.chmod(0o755)
+            except PermissionError:
+                if bw_path != runtime_path:
+                    runtime_path.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copy2(bw_path, runtime_path)
+                    runtime_path.chmod(0o755)
+                    bw_path = runtime_path
+                else:
+                    raise
+
+            decky.logger.info(f"bw CLI ready at {bw_path}")
+            return {"success": True, "path": str(bw_path)}
+        except Exception as exc:
+            decky.logger.error(f"Failed to locate bundled Bitwarden CLI: {exc}")
+            return {"success": False, "error": str(exc)}
