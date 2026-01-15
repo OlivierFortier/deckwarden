@@ -14,6 +14,7 @@ import {
 } from "@decky/api"
 import { useState } from "react";
 import { FaShip } from "react-icons/fa";
+import { InstallButton } from "./InstallButton";
 
 // import logo from "../assets/logo.png";
 
@@ -52,6 +53,9 @@ function Content() {
         >
           {"Start Python timer"}
         </ButtonItem>
+      </PanelSectionRow>
+      <PanelSectionRow>
+        <InstallButton/>
       </PanelSectionRow>
 
       {/* <PanelSectionRow>
