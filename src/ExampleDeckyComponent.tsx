@@ -4,15 +4,15 @@ import {
 } from "@decky/api"
 import { ButtonItem } from "@decky/ui";
 
-const callFunctionFromBackend = callable<[], { success: boolean; path?: string; error?: string }>("my_backend_function");
+const installBitwardenCli = callable<[], { success: boolean; error?: string }>("extract_bw_zip");
 
 export function InstallButton() {
 
     return <ButtonItem layout="below" onClick={async () => {
-        const result = await callFunctionFromBackend();
+        const result = await installBitwardenCli();
         toaster.toast({
             title: result.success ? "Success" : "Error",
-            body: result.success ? `Installed: ${result.path}` : result.error
+            body: result.success ? "Bitwarden CLI installed." : result.error
         });
     }}>
         Install Bitwarden CLI
