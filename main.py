@@ -63,6 +63,51 @@ class Plugin:
     async def add(self, left: int, right: int) -> int:
         return left + right
 
+    async def extract_bw_zip(self) -> dict:
+        zip_name = "bw-oss-linux-2025.12.1.zip"
+        bin_dir = Path(decky.DECKY_PLUGIN_DIR) / "bin"
+        zip_path = bin_dir / zip_name
+        if not zip_path.exists():
+            return {"success": False, "error": f"Zip not found: {zip_path}"}
+        try:
+            with zipfile.ZipFile(zip_path) as archive:
+                members = archive.infolist()
+                for member in members:
+                    member_path = Path(member.filename)
+                    if member_path.is_absolute() or ".." in member_path.parts:
+                        return {
+                            "success": False,
+                            "error": f"Unsafe path in zip: {member.filename}",
+                        }
+                for member in members:
+                    dest_path = bin_dir / member.filename
+                    if member.is_dir():
+                        if dest_path.exists() and dest_path.is_file():
+                            dest_path.unlink()
+                        dest_path.mkdir(parents=True, exist_ok=True)
+                        continue
+                    dest_path.parent.mkdir(parents=True, exist_ok=True)
+                    if dest_path.exists():
+                        if dest_path.is_dir():
+                            shutil.rmtree(dest_path)
+                        else:
+                            dest_path.unlink()
+                    with archive.open(member) as src, open(dest_path, "wb") as dst:
+                        shutil.copyfileobj(src, dst)
+                    if dest_path.name == "bw":
+                        try:
+                            os.chmod(dest_path, 0o755)
+                        except OSError:
+                            pass
+            bw_path = bin_dir / "bw"
+            if not bw_path.exists() or not bw_path.is_file():
+                return {"success": False, "error": "Extracted zip but bw binary is missing"}
+            return {"success": True}
+        except zipfile.BadZipFile:
+            return {"success": False, "error": "Invalid zip file"}
+        except OSError as exc:
+            return {"success": False, "error": f"Failed to extract zip: {exc}"}
+
     async def save_password(self, password: str) -> dict:
         if not password:
             return {"success": False, "error": "Password is empty"}
