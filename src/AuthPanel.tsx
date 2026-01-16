@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { callable, toaster } from "@decky/api";
 import { ButtonItem, Field, TextField, ToggleField, ConfirmModal, showModal } from "@decky/ui";
+import { copyWithVerification } from "./utils/clipboard";
 
 const getSavedPasswordStatus = callable<[], { saved: boolean; password?: string | null }>("get_saved_password_status");
 const savePassword = callable<[password: string], { success: boolean; error?: string }>("save_password");
@@ -349,6 +350,29 @@ export function AuthPanel() {
     }
   };
 
+  const handleCopy = async (value: string, label: string) => {
+    if (!value) {
+      toaster.toast({
+        title: "Nothing to copy",
+        body: `No ${label.toLowerCase()} available.`,
+      });
+      return;
+    }
+
+    const { success, verified } = await copyWithVerification(value);
+    if (success) {
+      toaster.toast({
+        title: "Copied",
+        body: verified ? `${label} copied to clipboard.` : `${label} copied (verification unavailable).`,
+      });
+    } else {
+      toaster.toast({
+        title: "Copy failed",
+        body: `Unable to copy ${label.toLowerCase()}.`,
+      });
+    }
+  };
+
   return (
     <>
       <ToggleField
@@ -378,6 +402,8 @@ export function AuthPanel() {
       <TextField
         label="Master password"
         description="Leave blank to use saved BW_PASSWORD. Needed to unlock your vault."
+        bIsPassword={true}
+        type="password"
         value={password}
         onChange={(event) => setPassword(event.target.value)}
       />
@@ -442,16 +468,56 @@ export function AuthPanel() {
       {selectedItem && itemDetails ? (
         <>
           {itemDetails.username ? (
-            <Field label="Username" description={itemDetails.username} />
+            <>
+              <Field label="Username" description={itemDetails.username} />
+              <ButtonItem
+                layout="below"
+                onClick={() => handleCopy(itemDetails.username ?? "", "Username")}
+                disabled={busy}
+              >
+                Copy username
+              </ButtonItem>
+            </>
           ) : null}
           {itemDetails.password ? (
-            <Field label="Password" description={itemDetails.password} />
+            <>
+              <Field label="Password" description={itemDetails.password} />
+              <ButtonItem
+                layout="below"
+                onClick={() => handleCopy(itemDetails.password ?? "", "Password")}
+                disabled={busy}
+              >
+                Copy password
+              </ButtonItem>
+            </>
           ) : null}
           {itemDetails.totp ? (
-            <Field label="TOTP" description={itemDetails.totp} />
+            <>
+              <Field label="TOTP" description={itemDetails.totp} />
+              <ButtonItem
+                layout="below"
+                onClick={() => handleCopy(itemDetails.totp ?? "", "TOTP")}
+                disabled={busy}
+              >
+                Copy TOTP
+              </ButtonItem>
+            </>
           ) : null}
           {itemDetails.uris?.length ? (
-            <Field label="URLs" description={itemDetails.uris.join("\n")} />
+            <>
+              {itemDetails.uris.map((uri, index) => (
+                <div key={`${uri}-${index}`}>
+                  <Field label={`URL ${index + 1}`} description={uri} />
+                  <ButtonItem
+                    layout="below"
+                    onClick={() => handleCopy(uri, `URL ${index + 1}`)}
+                    disabled={busy}
+                  >
+                    {`Copy URL ${index + 1}`}
+                  </ButtonItem>
+                </div>
+              ))}
+            </>
           ) : null}
         </>
       ) : null}
